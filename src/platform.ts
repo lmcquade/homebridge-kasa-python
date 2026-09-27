@@ -63,6 +63,7 @@ export default class KasaPythonPlatform implements DynamicPlatformPlugin {
   public venvPythonExecutable: string = '';
   private readonly homekitDevicesById: Map<string, HomeKitDevice> = new Map();
   private deviceDiscoveredHandler?: (device: KasaDevice) => Promise<void>;
+  private deferredDiscoveryTask?: () => Promise<void>;
   private discoveryInterval?: NodeJS.Timeout;
   private hideHomeKitMatter: boolean = true;
   private kasaProcess: ChildProcessWithoutNullStreams | undefined | null = null;
@@ -223,6 +224,7 @@ export default class KasaPythonPlatform implements DynamicPlatformPlugin {
     };
 
     const deferredDiscoveryTask = deferAndCombine(discoveryTask, this.config.advancedOptions.waitTimeUpdate);
+    this.deferredDiscoveryTask = deferredDiscoveryTask;
 
     this.discoveryInterval = setInterval(() => {
       try {
@@ -233,6 +235,21 @@ export default class KasaPythonPlatform implements DynamicPlatformPlugin {
     }, this.config.discoveryOptions.discoveryPollingInterval);
 
     this.log.debug('Periodic device discovery setup completed');
+  }
+
+  /**
+   * Lets a device request a rediscovery pass immediately after it goes offline,
+   * instead of waiting for the next scheduled discoveryPollingInterval tick.
+   */
+  public requestImmediateDiscovery(): void {
+    if (!this.deferredDiscoveryTask || this.isShuttingDown) {
+      return;
+    }
+    try {
+      this.taskQueue.addTask(this.deferredDiscoveryTask);
+    } catch (err) {
+      this.log.error('Error scheduling on-demand device discovery:', err);
+    }
   }
 
   private async discoverDevices() {

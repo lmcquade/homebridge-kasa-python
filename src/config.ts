@@ -44,6 +44,7 @@ export interface KasaPythonConfigInput {
   pollingInterval?: number;
   discoveryPollingInterval?: number;
   offlineInterval?: number;
+  maxPollFailuresBeforeOffline?: number;
   additionalBroadcasts?: string[];
   manualDevices?: (string | ConfigDevice)[];
   excludeMacAddresses?: string[];
@@ -70,6 +71,7 @@ export type KasaPythonConfig = {
     pollingInterval: number;
     discoveryPollingInterval: number;
     offlineInterval: number;
+    maxPollFailuresBeforeOffline: number;
     additionalBroadcasts: string[];
     manualDevices: ConfigDevice[];
     excludeMacAddresses: string[];
@@ -99,6 +101,7 @@ export const defaultConfig: KasaPythonConfig = {
     pollingInterval: 5,
     discoveryPollingInterval: 300,
     offlineInterval: 7,
+    maxPollFailuresBeforeOffline: 3,
     additionalBroadcasts: [],
     manualDevices: [],
     excludeMacAddresses: [],
@@ -187,6 +190,7 @@ function validateConfig(config: Record<string, unknown>): string[] {
   validateType(config, 'pollingInterval', 'number', errors);
   validateType(config, 'discoveryPollingInterval', 'number', errors);
   validateType(config, 'offlineInterval', 'number', errors);
+  validateType(config, 'maxPollFailuresBeforeOffline', 'number', errors);
 
   if (config.additionalBroadcasts !== undefined && !Array.isArray(config.additionalBroadcasts)) {
     errors.push('`additionalBroadcasts` should be an array of strings.');
@@ -207,6 +211,13 @@ function validateConfig(config: Record<string, unknown>): string[] {
   validateType(config, 'advancedPythonLogging', 'boolean', errors);
 
   validatePowerThreshold(config.powerThreshold, errors);
+
+  if (
+    typeof config.maxPollFailuresBeforeOffline === 'number' &&
+    (config.maxPollFailuresBeforeOffline < 1 || !Number.isInteger(config.maxPollFailuresBeforeOffline))
+  ) {
+    errors.push('`maxPollFailuresBeforeOffline` should be a positive integer.');
+  }
 
   return errors;
 }
@@ -271,6 +282,8 @@ export function parseConfig(config: Record<string, unknown>): KasaPythonConfig {
       pollingInterval: (parsedConfig.pollingInterval ?? defaultConfig.discoveryOptions.pollingInterval) * 1000,
       discoveryPollingInterval: (parsedConfig.discoveryPollingInterval ?? defaultConfig.discoveryOptions.discoveryPollingInterval) * 1000,
       offlineInterval: (parsedConfig.offlineInterval ?? defaultConfig.discoveryOptions.offlineInterval) * 24 * 60 * 60 * 1000,
+      maxPollFailuresBeforeOffline:
+        parsedConfig.maxPollFailuresBeforeOffline ?? defaultConfig.discoveryOptions.maxPollFailuresBeforeOffline,
       additionalBroadcasts: parsedConfig.additionalBroadcasts ?? defaultConfig.discoveryOptions.additionalBroadcasts,
       manualDevices: normalizedManualDevices,
       excludeMacAddresses: parsedConfig.excludeMacAddresses ?? defaultConfig.discoveryOptions.excludeMacAddresses,

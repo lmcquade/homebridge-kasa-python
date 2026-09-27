@@ -80,8 +80,9 @@ export default abstract class HomeKitParentDevice extends HomeKitDevice {
       return value;
     } catch (error) {
       this.log.error(`Child OnGet error (${child.alias}) ${descriptor.name}`, error);
-      this.kasaDevice.offline = true;
-      await this.stopPolling();
+      if (this.recordFailure()) {
+        await this.goOffline(`Child OnGet (${child.alias}) kept failing`);
+      }
       return this.defaultValueForCharacteristic(descriptor.type);
     }
   }
@@ -138,10 +139,12 @@ export default abstract class HomeKitParentDevice extends HomeKitDevice {
           }
         }
         this.previousSnapshot = JSON.parse(JSON.stringify(this.kasaDevice));
+        this.resetFailureCount();
       } catch (error) {
         this.log.error(`Child OnSet error (${child.alias}) ${descriptor.name}`, error);
-        this.kasaDevice.offline = true;
-        await this.stopPolling();
+        if (this.recordFailure()) {
+          await this.goOffline(`Child OnSet (${child.alias}) kept failing`);
+        }
       } finally {
         if (!isGrouped) {
           this.isUpdating = false;

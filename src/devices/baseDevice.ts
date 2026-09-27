@@ -34,6 +34,7 @@ export default abstract class HomeKitDevice {
   protected previousSnapshot?: KasaDevice;
   protected pollingInterval?: NodeJS.Timeout;
   protected updateEmitter = new EventEmitter();
+  private consecutiveFailures = 0;
 
   private static locks: Map<string, Promise<unknown>> = new Map();
   private pendingChanges: Map<string, { pendingValue: CharacteristicValue; count: number }> = new Map();
@@ -225,14 +226,17 @@ export default abstract class HomeKitDevice {
         }
         await this.updateAllServicesAndCharacteristics(forceUpdate);
         this.previousSnapshot = JSON.parse(JSON.stringify(this.kasaDevice));
+        this.resetFailureCount();
       } catch (error) {
+        const maxFailures = this.platform.config.discoveryOptions.maxPollFailuresBeforeOffline;
         if (error instanceof Error && error.message.startsWith('No sys_info returned for ')) {
-          this.log.warn(`Poll update failed: ${error.message}`);
+          this.log.warn(`Poll update failed (${this.consecutiveFailures + 1}/${maxFailures}): ${error.message}`);
         } else {
-          this.log.error('Error during poll update:', error);
+          this.log.error(`Error during poll update (${this.consecutiveFailures + 1}/${maxFailures}):`, error);
         }
-        this.kasaDevice.offline = true;
-        await this.stopPolling();
+        if (this.recordFailure()) {
+          await this.goOffline('Poll update kept failing');
+        }
       } finally {
         this.isUpdating = false;
         this.updateEmitter.emit('updateComplete');
@@ -268,6 +272,31 @@ export default abstract class HomeKitDevice {
 
   public updateAfterPeriodicDiscovery(force = false): void {
     void this.refreshAndUpdateCharacteristics(force, true);
+  }
+
+  /**
+   * Records a failed communication attempt with the device. A single dropped/garbled
+   * response (a common transient blip, not necessarily the device being truly gone)
+   * used to be treated as fatal here, forcing a full plugin restart to recover. Instead,
+   * only escalate to "offline" once failures exceed maxPollFailuresBeforeOffline in a row.
+   * Returns true if the caller should now go offline.
+   */
+  protected recordFailure(): boolean {
+    this.consecutiveFailures += 1;
+    return this.consecutiveFailures >= this.platform.config.discoveryOptions.maxPollFailuresBeforeOffline;
+  }
+
+  protected resetFailureCount(): void {
+    this.consecutiveFailures = 0;
+  }
+
+  protected async goOffline(reason: string): Promise<void> {
+    this.log.warn(
+      `${reason} after ${this.consecutiveFailures} consecutive failures; marking offline and stopping polling.`,
+    );
+    this.kasaDevice.offline = true;
+    await this.stopPolling();
+    this.platform.requestImmediateDiscovery();
   }
 
   protected setupPrimaryService(): void {
@@ -349,8 +378,9 @@ export default abstract class HomeKitDevice {
       return value;
     } catch (error) {
       this.log.error(`OnGet error for ${descriptor.name ?? descriptor.type.UUID}`, error);
-      this.kasaDevice.offline = true;
-      await this.stopPolling();
+      if (this.recordFailure()) {
+        await this.goOffline('OnGet kept failing');
+      }
       return this.defaultValueForCharacteristic(descriptor.type);
     }
   }
@@ -400,10 +430,12 @@ export default abstract class HomeKitDevice {
           }
         }
         this.previousSnapshot = JSON.parse(JSON.stringify(this.kasaDevice));
+        this.resetFailureCount();
       } catch (error) {
         this.log.error(`OnSet error for ${descriptor.name ?? descriptor.type.UUID}`, error);
-        this.kasaDevice.offline = true;
-        await this.stopPolling();
+        if (this.recordFailure()) {
+          await this.goOffline('OnSet kept failing');
+        }
       } finally {
         if (!isGrouped) {
           this.isUpdating = false;
