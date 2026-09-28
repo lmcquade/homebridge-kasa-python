@@ -187,7 +187,14 @@ async def discover_devices(
         await close_all_connections()
         log("All existing device connections closed.")
 
+    seen_hosts: set[str] = set()
+
     async def on_discovered(device: Device):
+        if device.host in seen_hosts:
+            log("Skipping device already discovered in this pass", host=device.host, alias=device.alias)
+            await safe_disconnect(device)
+            return
+        seen_hosts.add(device.host)
         log("Discovered device", host=device.host, alias=device.alias)
         try:
             await device.update()
@@ -253,8 +260,8 @@ async def discover_devices(
             log(f"Discovering on broadcast: {e}", level="ERROR", host=broadcast)
 
     async def discover_manual_device(host: str):
-        if host in device_config_cache:
-            return
+        # Manual devices must be rediscovered on every pass: they are often on another subnet where
+        # the broadcast scan can't reach them, so this is the only way an offline device comes back.
         log("Discovering manual device", host=host)
         device = None
         try:
